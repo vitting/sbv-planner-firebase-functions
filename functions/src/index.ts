@@ -110,7 +110,8 @@ export const updateSummaryOnCommentCreate = functions.firestore.document("/comme
             let numberOfcomments: number = summary.get("numberOfComments");
             console.log("Summary Comments Update", parentId, numberOfcomments, numberOfcomments + 1);
             return transaction.update(summaryRef, {
-                numberOfComments: ++numberOfcomments
+                numberOfComments: ++numberOfcomments,
+                commentsUpdatedAt: admin.firestore.FieldValue.serverTimestamp()
             });
         });
     } catch (error) {
