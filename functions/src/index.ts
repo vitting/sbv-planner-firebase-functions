@@ -14,6 +14,8 @@ import * as admin from 'firebase-admin';
  * 
  * firebase functions:config:set mode.sendermail="sender@mail.com"
  * 
+ * firebase functions:config:get
+ * 
  * firebase deploy --only functions
  */
 
@@ -59,7 +61,12 @@ export const sendUserCreatedMail = functions.firestore.document("/users/{documen
     };
 
     try {
-        await transporter.sendMail(mailOptions).then()
+        await db.collection("appmetas").doc("app-meta").set({
+            userToApproveLastUpdated: admin.firestore.FieldValue.serverTimestamp(),
+            usersToApprove: true
+        }, {merge: true});
+
+        await transporter.sendMail(mailOptions).then();
     } catch (error) {
         console.error("sendUserCreatedMail", error);
     }
@@ -70,6 +77,16 @@ export const sendUserCreatedMail = functions.firestore.document("/users/{documen
 export const sendUserAcceptedMail = functions.firestore.document("/users/{documentId}").onUpdate(async (change: Change<FirebaseFirestore.DocumentSnapshot>, context: functions.EventContext) => {
     const acceptedBefore: boolean = change.before.get("accepted");
     const acceptedAfter: boolean = change.after.get("accepted");
+    
+    try {
+        const usersToApprove = await db.collection("users").where("waitingForApproval", "==", true).select("waitingForApproval").get();
+        await db.collection("appmetas").doc("app-meta").set({
+            usersToApprove: !usersToApprove.empty
+        }, {merge: true});    
+    } catch (error) {
+        console.error("sendUserAcceptedMail", error);
+    }
+    
 
     if (acceptedBefore === false && acceptedAfter === true) {
         console.log("USER ACCEPT UPDATED", acceptedAfter);
