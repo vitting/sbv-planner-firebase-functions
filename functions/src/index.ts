@@ -57,14 +57,13 @@ export const sendUserCreatedMail = functions.firestore.document("/users/{documen
         subject: 'Du er blevet oprettet i SBV Planner',
         text: `Hej ${nameOfUser} \nDu er blevet oprettet. Men før du kan bruge SBV Planner skal du godkendes af en Administrator`,
         html: `<h3>Hej ${nameOfUser}</h3><p>Du er blevet oprettet. Men før du kan bruge SBV Planner skal du godkendes af en Administrator</p>`
-
     };
 
     try {
         await db.collection("appmetas").doc("app-meta").set({
             userToApproveLastUpdated: admin.firestore.FieldValue.serverTimestamp(),
             usersToApprove: true
-        }, {merge: true});
+        }, { merge: true });
 
         await transporter.sendMail(mailOptions).then();
     } catch (error) {
@@ -77,42 +76,17 @@ export const sendUserCreatedMail = functions.firestore.document("/users/{documen
 export const sendUserAcceptedMail = functions.firestore.document("/users/{documentId}").onUpdate(async (change: Change<FirebaseFirestore.DocumentSnapshot>, context: functions.EventContext) => {
     const acceptedBefore: boolean = change.before.get("accepted");
     const acceptedAfter: boolean = change.after.get("accepted");
-    
-    try {
-        const usersToApprove = await db.collection("users").where("waitingForApproval", "==", true).select("waitingForApproval").get();
-        await db.collection("appmetas").doc("app-meta").set({
-            usersToApprove: !usersToApprove.empty
-        }, {merge: true});    
-    } catch (error) {
-        console.error("sendUserAcceptedMail", error);
-    }
-    
+    const activeBefore: boolean = change.before.get("active");
+    const activeAfter: boolean = change.after.get("active");
+
+    await checkForUsersToApprove();
 
     if (acceptedBefore === false && acceptedAfter === true) {
-        console.log("USER ACCEPT UPDATED", acceptedAfter);
-        const userId: string = change.after.get("id");
-        const nameOfUser: string = change.after.get("name");
-        const authUser = await auth.getUser(userId);
-        let userEmail = authUser.email;
+        await userUpdateAccepted(change.after);
+    }
 
-        if (development) {
-            const devEmail = functions.config().mode.developmentemail;
-            console.log("USE DEVELOPMENT EMAIL", devEmail);
-            userEmail = devEmail;
-        }
-
-        const mailOptions: nodemailer.SendMailOptions = {
-            to: userEmail, // "mail1@mail.dk, mail2@mail.dk"
-            subject: 'Du er blevet godkendt i SBV Planner',
-            text: `Hej ${nameOfUser} \nDu er nu blevet godkendt. Du kan nu bruge SBV Planner`,
-            html: `<h3>Hej ${nameOfUser}</h3><p>Du er nu blevet godkendt. Du kan nu bruge SBV Planner</p>`
-        };
-
-        try {
-            await transporter.sendMail(mailOptions).then()
-        } catch (error) {
-            console.error("sendUserAcceptedMail", error);
-        }
+    if (activeBefore !== activeAfter) {
+        await authUserUpdateDisabled(change.after.get("id"), activeBefore, activeAfter);
     }
     return null;
 });
@@ -269,15 +243,15 @@ export const updateSummaryOnSubTaskComplete = functions.firestore.document("/sub
                 let numberOfItemsCompleted: number = summary.get("numberOfItemsCompleted");
                 const numberOfItems: number = summary.get("numberOfItems");
                 console.log("Summary Items Completed Update", taskId, numberOfItemsCompleted, numberOfItemsCompleted + 1);
-                
+
                 if (completeAfter && numberOfItems === numberOfItemsCompleted + 1) {
                     await db.collection("tasks").doc(taskId).update({
                         completed: true
-                    });    
+                    });
                 } else if (!completeAfter && numberOfItems === numberOfItemsCompleted) {
                     await db.collection("tasks").doc(taskId).update({
                         completed: false
-                    });    
+                    });
                 }
 
                 return transaction.update(summaryRef, {
@@ -292,3 +266,53 @@ export const updateSummaryOnSubTaskComplete = functions.firestore.document("/sub
         return null;
     }
 });
+
+async function authUserUpdateDisabled(userId: string, activeBefore: boolean, activeAfter: boolean) {
+    console.log(`AUTH USER DISABLED UPDATED | Before: ${activeBefore} | After: ${activeAfter}`);
+
+    try {
+        await auth.updateUser(userId, {
+            disabled: !activeAfter
+        });
+    } catch (error) {
+        console.error("sendUserAcceptedMail", error);
+    }
+}
+
+async function userUpdateAccepted(docAfter: admin.firestore.DocumentSnapshot) {
+    console.log("USER ACCEPT UPDATED", docAfter);
+    const userId: string = docAfter.get("id");
+    const nameOfUser: string = docAfter.get("name");
+    const authUser = await auth.getUser(userId);
+    let userEmail = authUser.email;
+
+    if (development) {
+        const devEmail = functions.config().mode.developmentemail;
+        console.log("USE DEVELOPMENT EMAIL", devEmail);
+        userEmail = devEmail;
+    }
+
+    const mailOptions: nodemailer.SendMailOptions = {
+        to: userEmail, // "mail1@mail.dk, mail2@mail.dk"
+        subject: 'Du er blevet godkendt i SBV Planner',
+        text: `Hej ${nameOfUser} \nDu er nu blevet godkendt. Du kan nu bruge SBV Planner`,
+        html: `<h3>Hej ${nameOfUser}</h3><p>Du er nu blevet godkendt. Du kan nu bruge SBV Planner</p>`
+    };
+
+    try {
+        await transporter.sendMail(mailOptions).then()
+    } catch (error) {
+        console.error("sendUserAcceptedMail", error);
+    }
+}
+
+async function checkForUsersToApprove() {
+    try {
+        const usersToApprove = await db.collection("users").where("waitingForApproval", "==", true).select("waitingForApproval").get();
+        await db.collection("appmetas").doc("app-meta").set({
+            usersToApprove: !usersToApprove.empty
+        }, { merge: true });
+    } catch (error) {
+        console.error("sendUserAcceptedMail", error);
+    }
+}
